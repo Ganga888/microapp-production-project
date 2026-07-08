@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: service1
-          image: YOUR_DOCKERHUB_USERNAME/service1:v1
+          image: ganga888/service1:v1
           ports:
             - containerPort: 5000
           env:
