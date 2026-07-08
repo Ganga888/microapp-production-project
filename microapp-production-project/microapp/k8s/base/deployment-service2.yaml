@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service2
+  namespace: microapp
+  labels:
+    app: service2
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: service2
+  template:
+    metadata:
+      labels:
+        app: service2
+        version: v1
+    spec:
+      containers:
+        - name: service2
+          image: YOUR_DOCKERHUB_USERNAME/service2:v1
+          ports:
+            - containerPort: 5000
+          env:
+            - name: SERVICE_NAME
+              value: "service2"
+            - name: VERSION
+              value: "v1"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 5000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service2
+  namespace: microapp
+spec:
+  selector:
+    app: service2
+  ports:
+    - port: 80
+      targetPort: 5000
+  type: ClusterIP

@@ -1,0 +1,107 @@
+# ============================================================
+# CANARY DEPLOYMENT PATTERN (using service2 as the example)
+# ============================================================
+# Idea: keep your normal "main" Ingress + Service + Deployment
+# (v1, 100% of traffic) untouched. Add a SECOND Deployment +
+# Service (v2) and a SECOND Ingress marked as a "canary" with a
+# traffic weight. NGINX Ingress Controller splits traffic between
+# the two based on the weight — no app code changes needed.
+#
+# This assumes service2's main Deployment/Service (v1) already
+# exists from k8s/base/deployment-service2.yaml.
+
+# --- New Deployment for the canary (v2) version ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service2-canary
+  namespace: microapp
+  labels:
+    app: service2
+    track: canary
+spec:
+  replicas: 1        # deliberately fewer replicas than stable while testing
+  selector:
+    matchLabels:
+      app: service2
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: service2
+        track: canary
+        version: v2
+    spec:
+      containers:
+        - name: service2
+          image: YOUR_DOCKERHUB_USERNAME/service2:v2
+          ports:
+            - containerPort: 5000
+          env:
+            - name: VERSION
+              value: "v2-canary"
+          readinessProbe:
+            httpGet: { path: /readyz, port: 5000 }
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: 5000 }
+            initialDelaySeconds: 5
+---
+# --- Service pointing only at the canary pods ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service2-canary
+  namespace: microapp
+spec:
+  selector:
+    app: service2
+    track: canary
+  ports:
+    - port: 80
+      targetPort: 5000
+  type: ClusterIP
+---
+# --- Canary Ingress: same host/path as the main ingress, but flagged
+#     as canary with a traffic weight. Start at 10%, then 25%, 50%,
+#     100% as confidence grows, monitoring error rates/latency each step.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: service2-canary-ingress
+  namespace: microapp
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "10"   # 10% of traffic -> canary
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - ganga888.online
+      secretName: ganga888-tls
+  rules:
+    - host: ganga888.online
+      http:
+        paths:
+          - path: /service2(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: service2-canary
+                port:
+                  number: 80
+
+# ---------------------------------------------------------------
+# Promotion path once you're confident:
+#   1. Bump canary-weight: 10 -> 25 -> 50 -> 100 (kubectl edit/apply)
+#   2. At 100%, replace the main service2 Deployment image with v2
+#   3. Delete service2-canary Deployment/Service/Ingress
+#   4. Done — v2 is now "stable"
+#
+# For header/cookie-based canary instead of weight-based, you can add:
+#   nginx.ingress.kubernetes.io/canary-by-header: "X-Canary"
+#   nginx.ingress.kubernetes.io/canary-by-header-value: "always"
+# ---------------------------------------------------------------

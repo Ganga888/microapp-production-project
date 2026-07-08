@@ -1,0 +1,96 @@
+# ============================================================
+# BLUE-GREEN DEPLOYMENT PATTERN (using service1 as the example)
+# ============================================================
+# Idea: run TWO full deployments at once — "blue" (current/live)
+# and "green" (new version). The Service's selector decides which
+# one receives live traffic. Cutover = flip one label, zero downtime.
+# Rollback = flip it back. Instant, no rebuild needed.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service1-blue
+  namespace: microapp
+  labels:
+    app: service1
+    slot: blue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: service1
+      slot: blue
+  template:
+    metadata:
+      labels:
+        app: service1
+        slot: blue
+        version: v1
+    spec:
+      containers:
+        - name: service1
+          image: YOUR_DOCKERHUB_USERNAME/service1:v1
+          ports:
+            - containerPort: 5000
+          env:
+            - name: VERSION
+              value: "v1-blue"
+          readinessProbe:
+            httpGet: { path: /readyz, port: 5000 }
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: 5000 }
+            initialDelaySeconds: 5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service1-green
+  namespace: microapp
+  labels:
+    app: service1
+    slot: green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: service1
+      slot: green
+  template:
+    metadata:
+      labels:
+        app: service1
+        slot: green
+        version: v2
+    spec:
+      containers:
+        - name: service1
+          image: YOUR_DOCKERHUB_USERNAME/service1:v2
+          ports:
+            - containerPort: 5000
+          env:
+            - name: VERSION
+              value: "v2-green"
+          readinessProbe:
+            httpGet: { path: /readyz, port: 5000 }
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: 5000 }
+            initialDelaySeconds: 5
+---
+# The live Service — selector currently points at "blue" (the current prod version).
+# To cut over to green: kubectl patch svc service1 -n microapp -p '{"spec":{"selector":{"app":"service1","slot":"green"}}}'
+# To roll back: patch it back to slot: blue. Traffic switches instantly, no pod restarts.
+apiVersion: v1
+kind: Service
+metadata:
+  name: service1
+  namespace: microapp
+spec:
+  selector:
+    app: service1
+    slot: blue        # <-- flip this (blue/green) to cut over
+  ports:
+    - port: 80
+      targetPort: 5000
+  type: ClusterIP
